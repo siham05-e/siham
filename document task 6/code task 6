@@ -1,0 +1,165 @@
+const int carGreen  = 11;
+const int carYellow = 12;
+const int carRed    = 13;
+
+const int pedGreen  = 9;
+const int pedRed    = 10;
+
+
+const int IR_PIN    = 2; 
+const int TRIG_PIN  = 6;  
+const int ECHO_PIN  = 7;  
+
+
+const unsigned long minCarGreenTime = 5000;  
+const unsigned long yellowTime      = 3000;  
+const unsigned long pedWalkTime     = 10000;
+
+const float safetyThresholdCm = 50.0; 
+
+
+enum State { CARS_GREEN, CARS_YELLOW, PEDESTRIANS_GREEN };
+State state = CARS_GREEN;
+
+unsigned long stateStartMillis = 0;
+bool pedRequest = false;
+
+
+unsigned long lastIrTriggerMillis = 0;
+const unsigned long irCooldown = 800; // ms
+
+
+unsigned long lastUltraMillis = 0;
+const unsigned long ultraPeriod = 200; // ms
+
+void setup() {
+  pinMode(carGreen, OUTPUT);
+  pinMode(carYellow, OUTPUT);
+  pinMode(carRed, OUTPUT);
+
+  pinMode(pedGreen, OUTPUT);
+  pinMode(pedRed, OUTPUT);
+
+  
+  pinMode(IR_PIN, INPUT);
+
+  pinMode(TRIG_PIN, OUTPUT);
+  pinMode(ECHO_PIN, INPUT);
+
+  digitalWrite(TRIG_PIN, LOW);
+
+  Serial.begin(9600);
+  Serial.println("System start. Serial=9600");
+  Serial.println("HC-SR04 measuring...");
+
+  stateStartMillis = millis();
+  setLights(CARS_GREEN);
+}
+
+void loop() {
+  unsigned long now = millis();
+
+  
+  int irVal = digitalRead(IR_PIN);
+  if (irVal == HIGH && (now - lastIrTriggerMillis) > irCooldown) {
+    pedRequest = true;
+    lastIrTriggerMillis = now;
+    Serial.println("IR: Pedestrian request!");
+  }
+
+
+  float dist = readDistanceCm(); 
+  bool vehiclePresent = false;
+  if (dist > 0 && dist <= safetyThresholdCm) {
+    vehiclePresent = true;
+  }
+
+  if (now - lastUltraMillis >= ultraPeriod) {
+    lastUltraMillis = now;
+
+    Serial.print("Distance (cm): ");
+    if (dist < 0) Serial.println("No echo");
+    else Serial.println(dist, 1);
+
+    Serial.print("VehiclePresent: ");
+    Serial.println(vehiclePresent ? "YES" : "NO");
+  }
+
+  
+  switch (state) {
+
+    case CARS_GREEN:
+      
+      if (pedRequest &&
+          (now - stateStartMillis >= minCarGreenTime) &&
+          !vehiclePresent) {
+        state = CARS_YELLOW;
+        stateStartMillis = now;
+        setLights(CARS_YELLOW);
+      }
+      
+      break;
+
+    case CARS_YELLOW:
+      if (now - stateStartMillis >= yellowTime) {
+        state = PEDESTRIANS_GREEN;
+        stateStartMillis = now;
+        setLights(PEDESTRIANS_GREEN);
+      }
+      break;
+
+    case PEDESTRIANS_GREEN:
+      if (now - stateStartMillis >= pedWalkTime) {
+        pedRequest = false;
+        state = CARS_GREEN;
+        stateStartMillis = now;
+        setLights(CARS_GREEN);
+      }
+      break;
+  }
+}
+
+
+void setLights(State s) {
+  if (s == CARS_GREEN) {
+    digitalWrite(carGreen, HIGH);
+    digitalWrite(carYellow, LOW);
+    digitalWrite(carRed, LOW);
+
+    digitalWrite(pedGreen, LOW);
+    digitalWrite(pedRed, HIGH);
+  }
+  else if (s == CARS_YELLOW) {
+    digitalWrite(carGreen, LOW);
+    digitalWrite(carYellow, HIGH);
+    digitalWrite(carRed, LOW);
+
+    digitalWrite(pedGreen, LOW);
+    digitalWrite(pedRed, HIGH);
+  }
+  else if (s == PEDESTRIANS_GREEN) {
+    digitalWrite(carGreen, LOW);
+    digitalWrite(carYellow, LOW);
+    digitalWrite(carRed, HIGH);
+
+    digitalWrite(pedGreen, HIGH);
+    digitalWrite(pedRed, LOW);
+  }
+}
+
+
+float readDistanceCm() {
+
+  digitalWrite(TRIG_PIN, LOW);
+  delayMicroseconds(2);
+  digitalWrite(TRIG_PIN, HIGH);
+  delayMicroseconds(10);
+  digitalWrite(TRIG_PIN, LOW);
+
+  
+  unsigned long duration = pulseIn(ECHO_PIN, HIGH, 30000UL);
+  if (duration == 0) return -1;
+
+  // distance = (duration * 0.0343) / 2
+  return (duration * 0.0343f) / 2.0f;
+}
